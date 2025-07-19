@@ -1,14 +1,29 @@
 // 初始化Three.js场景
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas') });
+// 获取canvas元素
+const canvas = document.getElementById('gameCanvas');
+if (!canvas) {
+    console.error('Canvas element not found!');
+}
+
+// 初始化渲染器
+const renderer = new THREE.WebGLRenderer({
+    canvas: canvas,
+    antialias: true
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.setClearColor(0x87CEEB); // 设置天空背景色
+
+// 添加轨道控制器
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
 
 // 迷宫参数
 const mazeSize = 15; // 迷宫尺寸
 const cellSize = 4;  // 单元格大小
-const wallHeight = 3; // 墙高
 
 // 迷宫数据结构 (0=通道, 1=墙)
 let maze = [];
@@ -40,33 +55,57 @@ function generateMaze() {
         }
     }
     
-    // 设置出口
+    // 确保出口不被封死
+    maze[mazeSize-3][mazeSize-2] = 0;
+    maze[mazeSize-2][mazeSize-3] = 0;
+    maze[mazeSize-2][mazeSize-2] = 0; // 出口位置
+    
+    // 设置出口标志
     maze[mazeSize-2][mazeSize-2] = 2;
 }
 
 // 创建迷宫墙壁
 function createMazeWalls() {
-    const wallMaterial = new THREE.MeshStandardMaterial({ 
+    const wallMaterial = new THREE.MeshStandardMaterial({
         color: 0x3498db,
         roughness: 0.8,
         metalness: 0.2
+    });
+    
+    // 出口标记材质
+    const exitMaterial = new THREE.MeshStandardMaterial({
+        color: 0x2ecc71,
+        roughness: 0.6,
+        metalness: 0.3,
+        emissive: 0x00ff00
     });
     
     for (let y = 0; y < mazeSize; y++) {
         for (let x = 0; x < mazeSize; x++) {
             if (maze[y][x] === 1) {
                 const wall = new THREE.Mesh(
-                    new THREE.BoxGeometry(cellSize, wallHeight, cellSize),
+                    new THREE.BoxGeometry(cellSize, 3, cellSize),
                     wallMaterial
                 );
                 wall.position.set(
                     (x - mazeSize/2) * cellSize,
-                    wallHeight/2,
+                    1.5,
                     (y - mazeSize/2) * cellSize
                 );
                 wall.castShadow = true;
                 wall.receiveShadow = true;
                 scene.add(wall);
+            } else if (maze[y][x] === 2) { // 出口位置
+                const exitMarker = new THREE.Mesh(
+                    new THREE.BoxGeometry(cellSize, 0.2, cellSize),
+                    exitMaterial
+                );
+                exitMarker.position.set(
+                    (x - mazeSize/2) * cellSize,
+                    0.1,
+                    (y - mazeSize/2) * cellSize
+                );
+                scene.add(exitMarker);
             }
         }
     }
@@ -96,9 +135,8 @@ function setupLights() {
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
     scene.add(ambientLight);
     
-    // 主方向光
+    // 主方向光（将绑定到相机）
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(10, 20, 10);
     directionalLight.castShadow = true;
     directionalLight.shadow.mapSize.width = 2048;
     directionalLight.shadow.mapSize.height = 2048;
@@ -118,6 +156,8 @@ function setupLights() {
     // 半球光 - 增强环境效果
     const hemisphereLight = new THREE.HemisphereLight(0xffffbb, 0x080820, 0.2);
     scene.add(hemisphereLight);
+    
+    return directionalLight;
 }
 
 // 玩家变量
@@ -154,41 +194,92 @@ function setupControls() {
     return keyState;
 }
 
-// 检测碰撞
-function checkCollision(newX, newZ) {
-    // 转换为网格坐标
-    const gridX = Math.floor((newX + mazeSize/2 * cellSize) / cellSize);
-    const gridZ = Math.floor((newZ + mazeSize/2 * cellSize) / cellSize);
+// 基于相机方向的移动向量
+function getMovementVector(keyState) {
+    const direction = new THREE.Vector3();
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
     
-    // 检查是否超出边界
-    if (gridX < 0 || gridX >= mazeSize || gridZ < 0 || gridZ >= mazeSize) {
-        return true;
+    // 获取相机方向
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+    
+    // 计算右方向
+    right.crossVectors(new THREE.Vector3(0, 1, 0), forward);
+    
+    // 根据按键组合移动方向
+    if (keyState['w']) direction.add(forward);
+    if (keyState['s']) direction.sub(forward);
+    if (keyState['a']) direction.add(right);
+    if (keyState['d']) direction.sub(right);
+    
+    // 归一化并应用速度
+    if (direction.length() > 0) {
+        direction.normalize().multiplyScalar(playerSpeed);
     }
     
-    // 检查是否为墙
-    return maze[gridZ][gridX] === 1;
+    return direction;
+}
+
+// 碰撞检测（分轴检测，允许滑动）
+function checkCollision(newPos) {
+    // 分别检测X轴和Z轴移动
+    const moveX = new THREE.Vector3(newPos.x, player.position.y, player.position.z);
+    const moveZ = new THREE.Vector3(player.position.x, player.position.y, newPos.z);
+    
+    // 创建射线
+    const raycaster = new THREE.Raycaster();
+    const walls = scene.children.filter(obj => 
+        obj.geometry && 
+        obj.geometry.type === 'BoxGeometry' && 
+        obj.position.y > 0.5 // 只检测墙壁
+    );
+    
+    // 检测X轴移动
+    let canMoveX = true;
+    raycaster.set(player.position, moveX.clone().sub(player.position).normalize());
+    raycaster.far = player.position.distanceTo(moveX) + 1;
+    if (raycaster.intersectObjects(walls).length > 0) {
+        canMoveX = false;
+    }
+    
+    // 检测Z轴移动
+    let canMoveZ = true;
+    raycaster.set(player.position, moveZ.clone().sub(player.position).normalize());
+    raycaster.far = player.position.distanceTo(moveZ) + 1;
+    if (raycaster.intersectObjects(walls).length > 0) {
+        canMoveZ = false;
+    }
+    
+    return {
+        canMoveX,
+        canMoveZ
+    };
 }
 
 // 更新玩家位置
-function updatePlayerPosition(keyState) {
+function updatePlayerPosition(keyState, mainLight) {
     if (!gameActive) return;
     
-    let moveX = 0;
-    let moveZ = 0;
+    // 更新光源位置跟随相机
+    mainLight.position.copy(camera.position);
     
-    if (keyState['w']) moveZ -= playerSpeed;
-    if (keyState['s']) moveZ += playerSpeed;
-    if (keyState['a']) moveX -= playerSpeed;
-    if (keyState['d']) moveX += playerSpeed;
+    // 获取基于相机方向的移动向量
+    const moveVector = getMovementVector(keyState);
     
-    // 尝试X轴移动
-    if (!checkCollision(player.position.x + moveX, player.position.z)) {
-        player.position.x += moveX;
+    // 计算新位置
+    const newPos = player.position.clone().add(moveVector);
+    
+    // 分轴检测碰撞
+    const collision = checkCollision(newPos);
+    
+    // 允许滑动：如果一个方向受阻，允许另一个方向移动
+    if (collision.canMoveX) {
+        player.position.x = newPos.x;
     }
-    
-    // 尝试Z轴移动
-    if (!checkCollision(player.position.x, player.position.z + moveZ)) {
-        player.position.z += moveZ;
+    if (collision.canMoveZ) {
+        player.position.z = newPos.z;
     }
     
     // 检查胜利条件
@@ -202,7 +293,27 @@ function updatePlayerPosition(keyState) {
     if (distance < 2) {
         gameActive = false;
         clearInterval(timerInterval);
-        document.getElementById('instructions').textContent = '恭喜！你成功逃出迷宫！';
+        
+        // 计算通关时间
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+        const seconds = (elapsed % 60).toString().padStart(2, '0');
+        const record = `${minutes}:${seconds}`;
+        
+        // 保存记录到localStorage
+        let records = JSON.parse(localStorage.getItem('mazeRecords') || '[]');
+        records.push({
+            time: record,
+            date: new Date().toLocaleString()
+        });
+        localStorage.setItem('mazeRecords', JSON.stringify(records));
+        
+        // 显示通关记录
+        document.getElementById('instructions').innerHTML = `
+            恭喜！你成功逃出迷宫！用时：${record}<br>
+            历史记录：${records.slice(-5).map(r => r.time).join(', ')}
+            <button onclick="location.reload()">重新开始</button>
+        `;
     }
 }
 
@@ -219,12 +330,16 @@ function initGame() {
     generateMaze();
     createMazeWalls();
     createGround();
-    setupLights();
+    const mainLight = setupLights(); // 获取主光源
     createPlayer();
     
-    // 相机初始位置
-    camera.position.set(0, 10, mazeSize/2 * cellSize);
-    camera.lookAt(0, 0, 0);
+    // 相机初始位置（提高高度）
+    camera.position.set(0, 50, 50);
+    controls.target.set(0, 0, 0);
+    controls.update();
+    
+    // 调整主光源位置（高于迷宫）
+    mainLight.position.set(0, 50, 0);
     
     // 启动计时器
     startTime = Date.now();
@@ -236,7 +351,8 @@ function initGame() {
     // 动画循环
     function animate() {
         requestAnimationFrame(animate);
-        updatePlayerPosition(keyState);
+        updatePlayerPosition(keyState, mainLight);
+        controls.update(); // 更新控制器
         renderer.render(scene, camera);
     }
     animate();
