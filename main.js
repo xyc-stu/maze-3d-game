@@ -83,13 +83,16 @@ function createMazeWalls() {
     for (let y = 0; y < mazeSize; y++) {
         for (let x = 0; x < mazeSize; x++) {
             if (maze[y][x] === 1) {
+                // 随机墙体高度 (3-8米)
+                const height = 3 + Math.random() * 10;
+                
                 const wall = new THREE.Mesh(
-                    new THREE.BoxGeometry(cellSize, 3, cellSize),
+                    new THREE.BoxGeometry(cellSize, height, cellSize),
                     wallMaterial
                 );
                 wall.position.set(
                     (x - mazeSize/2) * cellSize,
-                    1.5,
+                    height/2, // 中心点在高度一半
                     (y - mazeSize/2) * cellSize
                 );
                 wall.castShadow = true;
@@ -358,13 +361,13 @@ function initGame() {
     const mainLight = setupLights(); // 获取主光源
     createPlayer();
     
-    // 相机初始位置（提高高度）
-    camera.position.set(0, 50, 50);
+    // 相机初始位置（进一步提高高度以适应更高墙体）
+    camera.position.set(0, 45, 45);
     controls.target.set(0, 0, 0);
     controls.update();
     
     // 调整主光源位置（高于迷宫）
-    mainLight.position.set(0, 50, 0);
+    mainLight.position.set(0, 45, 0);
     
     // 启动计时器
     startTime = Date.now();
