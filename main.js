@@ -72,12 +72,12 @@ function createMazeWalls() {
         metalness: 0.2
     });
     
-    // 出口标记材质
+    // 出口标记材质（改为红色）
     const exitMaterial = new THREE.MeshStandardMaterial({
-        color: 0x2ecc71,
+        color: 0xff0000,
         roughness: 0.6,
         metalness: 0.3,
-        emissive: 0x00ff00
+        emissive: 0xff3333
     });
     
     for (let y = 0; y < mazeSize; y++) {
@@ -308,12 +308,37 @@ function updatePlayerPosition(keyState, mainLight) {
         });
         localStorage.setItem('mazeRecords', JSON.stringify(records));
         
-        // 显示通关记录
-        document.getElementById('instructions').innerHTML = `
-            恭喜！你成功逃出迷宫！用时：${record}<br>
-            历史记录：${records.slice(-5).map(r => r.time).join(', ')}
-            <button onclick="location.reload()">重新开始</button>
-        `;
+        // 显示通关记录（使用新样式）
+        let recordsHtml = `<div>恭喜！你成功逃出迷宫！用时：<strong>${record}</strong></div>`;
+        
+        if (records.length > 0) {
+            recordsHtml += `
+                <div class="records-container">
+                    <h3>历史记录</h3>
+                    <table id="records-table">
+                        <thead>
+                            <tr>
+                                <th>通关时间</th>
+                                <th>日期</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${records.slice(-5).map(record => `
+                                <tr>
+                                    <td>${record.time}</td>
+                                    <td>${record.date}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    <button id="restart-button" onclick="location.reload()">重新开始</button>
+                </div>
+            `;
+        } else {
+            recordsHtml += `<button id="restart-button" onclick="location.reload()">重新开始</button>`;
+        }
+        
+        document.getElementById('instructions').innerHTML = recordsHtml;
     }
 }
 
